@@ -1,0 +1,43 @@
+services:
+  server:
+    build: ./server
+    image: flwr-server:latest
+    container_name: flwr_server
+    ports:
+      - "8080:8080"
+
+  client0:
+    build: ./client
+    image: flwr-client:latest
+    container_name: flwr_client_0
+    environment:
+      - CLIENT_ID=0
+      - SERVER_ADDRESS=server:8080
+      - USE_DP=${USE_DP:-True}
+      - DP_NOISE_SCALE=${DP_NOISE_SCALE:-0.05}
+    depends_on:
+      - server
+
+  client1:
+    build: ./client
+    image: flwr-client:latest
+    container_name: flwr_client_1
+    environment:
+      - CLIENT_ID=1
+      - SERVER_ADDRESS=server:8080
+      - USE_DP=${USE_DP:-True}
+      - DP_NOISE_SCALE=${DP_NOISE_SCALE:-0.05}
+    depends_on:
+      - server
+
+  client2:
+    build: ./client
+    image: flwr-client:latest
+    container_name: flwr_client_2
+    environment:
+      - CLIENT_ID=2
+      - SERVER_ADDRESS=server:8080
+      - USE_DP=${USE_DP:-True}
+      - DP_NOISE_SCALE=${DP_NOISE_SCALE:-0.05}
+    depends_on:
+      - server
