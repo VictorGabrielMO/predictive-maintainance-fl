@@ -3,6 +3,8 @@ services:
     build: ./server
     image: flwr-server:latest
     container_name: flwr_server
+    environment:
+      - NUM_ROUNDS=${NUM_ROUNDS:-20}
     ports:
       - "8080:8080"
 
@@ -14,7 +16,9 @@ services:
       - CLIENT_ID=0
       - SERVER_ADDRESS=server:8080
       - USE_DP=${USE_DP:-True}
-      - DP_NOISE_SCALE=${DP_NOISE_SCALE:-0.05}
+      - DP_EPSILON=${DP_EPSILON:-1.0}
+      - DP_DELTA=${DP_DELTA:-1e-5}
+      - DP_CLIP_NORM=${DP_CLIP_NORM:-1.0}
     depends_on:
       - server
 
@@ -26,7 +30,9 @@ services:
       - CLIENT_ID=1
       - SERVER_ADDRESS=server:8080
       - USE_DP=${USE_DP:-True}
-      - DP_NOISE_SCALE=${DP_NOISE_SCALE:-0.05}
+      - DP_EPSILON=${DP_EPSILON:-1.0}
+      - DP_DELTA=${DP_DELTA:-1e-5}
+      - DP_CLIP_NORM=${DP_CLIP_NORM:-1.0}
     depends_on:
       - server
 
@@ -38,6 +44,21 @@ services:
       - CLIENT_ID=2
       - SERVER_ADDRESS=server:8080
       - USE_DP=${USE_DP:-True}
-      - DP_NOISE_SCALE=${DP_NOISE_SCALE:-0.05}
+      - DP_EPSILON=${DP_EPSILON:-1.0}
+      - DP_DELTA=${DP_DELTA:-1e-5}
+      - DP_CLIP_NORM=${DP_CLIP_NORM:-1.0}
     depends_on:
       - server
+
+  # Serviço sob demanda: roda o harness de experimentos (utilidade + ataque) e grava
+  # os resultados em ./results. NÃO sobe com 'docker compose up' (tem profile próprio).
+  # Rodar com:  docker compose --profile experiments run --rm experiments
+  experiments:
+    build:
+      context: .
+      dockerfile: experiments.Dockerfile
+    image: flwr-experiments:latest
+    container_name: flwr_experiments
+    profiles: ["experiments"]
+    volumes:
+      - ./results:/app/results

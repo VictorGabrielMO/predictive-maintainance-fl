@@ -10,41 +10,43 @@ from sklearn.metrics import log_loss
 from sklearn.preprocessing import StandardScaler
 from grpc import RpcError
 
+from dp_utils import aplicar_dp
+
 
 warnings.filterwarnings("ignore")
 
 def main():
     # 1. Carrega o dataset de manutenção preditiva baixado no Dockerfile
     df = pd.read_csv("ai4i2020.csv")
-    
+
     # Converte a coluna de texto 'Type' (L, M, H) em números (0, 1, 2)
     type_mapping = {'L': 0, 'M': 1, 'H': 2}
     df['Type'] = df['Type'].map(type_mapping)
-    
+
     # Seleciona as colunas de sensores (Features)
     feature_cols = [
-        'Type', 'Air temperature [K]', 'Process temperature [K]', 
+        'Type', 'Air temperature [K]', 'Process temperature [K]',
         'Rotational speed [rpm]', 'Torque [Nm]', 'Tool wear [min]'
     ]
     X = df[feature_cols].values
     y = df['Machine failure'].values
-    
+
     # Normalização dos dados (fundamental para dados de sensores com escalas muito diferentes)
     scaler = StandardScaler()
     X = scaler.fit_transform(X)
-    
+
     # 2. Simula dados distribuídos usando o CLIENT_ID (0, 1 ou 2)
     client_id = int(os.getenv("CLIENT_ID", 0))
-    
+
     indices = np.arange(len(X))
     np.random.seed(42)
     np.random.shuffle(indices)
-    
+
     # Divide as 10.000 linhas em 3 fatias (uma para cada fábrica/container)
     fatias = np.array_split(indices, 3)
     meus_indices = fatias[client_id]
     X_local, y_local = X[meus_indices], y[meus_indices]
-    
+
     # 3. Inicializa o modelo de Regressão Logística
     # Usamos class_weight='balanced' porque falhas de máquinas são eventos raros (dados desbalanceados)
     model = LogisticRegression(warm_start=True, max_iter=1, class_weight='balanced')
@@ -56,23 +58,27 @@ def main():
         def get_parameters(self, config):
             pesos_reais = model.coef_
             intercept_real = model.intercept_
-            
+
             # Lê a variável de ambiente (Padrão é False se não for informada)
             use_dp = os.getenv("USE_DP", "False").lower() == "true"
-            
+
             if use_dp:
-                # Se DP estiver ativo, adiciona o ruído Gaussiano
-                escala_do_ruido = float(os.getenv("DP_NOISE_SCALE", 0.05)) # Permite configurar a escala do ruído via variável de ambiente
-                print (f"[Fábrica {client_id}] Modo DP ATIVO. Adicionando ruído gaussiano com escala {escala_do_ruido} aos pesos.")
-                ruido_pesos = np.random.normal(0, escala_do_ruido, pesos_reais.shape)
-                pesos_finais = pesos_reais + ruido_pesos
-                print(f"[Fábrica {client_id}] Parâmetros ENVIADOS COM Privacidade Diferencial (Ruído adicionado).")
-            else:
-                # Caso contrário, envia os pesos originais normais
-                pesos_finais = pesos_reais
-                print(f"[Fábrica {client_id}] Parâmetros ENVIADOS SEM Privacidade Diferencial (Modo Normal).")
-            
-            return [pesos_finais, intercept_real]
+                # Parâmetros do mecanismo gaussiano (orçamento de privacidade POR RODADA)
+                clip_norm = float(os.getenv("DP_CLIP_NORM", 1.0))  # cota de sensibilidade L2 (C)
+                epsilon = float(os.getenv("DP_EPSILON", 1.0))
+                delta = float(os.getenv("DP_DELTA", 1e-5))
+
+                # Clip da norma L2 do vetor [coef_, intercept_] e ruído calibrado por epsilon
+                coef_dp, intercept_dp, sigma = aplicar_dp(
+                    pesos_reais, intercept_real, clip_norm, epsilon, delta
+                )
+                print(f"[Fábrica {client_id}] Modo DP ATIVO. clip C={clip_norm}, epsilon={epsilon}, delta={delta}, sigma calculado={sigma:.4f}.")
+                print(f"[Fábrica {client_id}] Parâmetros ENVIADOS COM Privacidade Diferencial (clipping + ruído gaussiano).")
+                return [coef_dp, intercept_dp]
+
+            # Caso contrário, envia os pesos originais normais
+            print(f"[Fábrica {client_id}] Parâmetros ENVIADOS SEM Privacidade Diferencial (Modo Normal).")
+            return [pesos_reais, intercept_real]
 
         def set_parameters(self, parameters):
             model.coef_ = parameters[0]
@@ -94,7 +100,7 @@ def main():
     # 5. Conecta ao servidor central
     server_address = os.getenv("SERVER_ADDRESS", "localhost:8080")
     print(f"Iniciando Cliente da Fábrica {client_id} conectado em {server_address}...")
-    
+
     # Tenta ligar-se até 10 vezes antes de crashar o container
     for tentativa in range(10):
         try:
